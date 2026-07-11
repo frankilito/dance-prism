@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>舞光十色 DANCE PRISM</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+
+  <!-- 启动加载 -->
+  <div id="boot" class="screen active">
+    <div class="boot-logo">DANCE<span>PRISM</span></div>
+    <div class="boot-bar"><div id="bootFill"></div></div>
+    <div id="bootMsg" class="boot-msg">正在点亮舞台…</div>
+  </div>
+
+  <!-- 标题页 -->
+  <div id="title" class="screen">
+    <div class="title-wrap">
+      <div class="title-kicker">MOTION · MUSIC · STAGE</div>
+      <h1 class="title-logo"><em>舞光</em>十色</h1>
+      <div class="title-sub">DANCE PRISM</div>
+      <button id="btnStart" class="btn-primary pulse">开始派对</button>
+      <div class="title-hint">需要摄像头 · 全程本地识别,画面不会上传</div>
+    </div>
+    <div class="title-foot">Chrome 打开效果最佳 · 建议全屏游玩</div>
+  </div>
+
+  <!-- 选歌 -->
+  <div id="select" class="screen">
+    <div class="sel-top">
+      <div class="sel-heading">选择舞曲 <span>SONG SELECT</span></div>
+      <div class="mode-toggle">
+        <button id="modeSolo" class="mode-btn on">单人</button>
+        <button id="modeDuo" class="mode-btn">双人同屏</button>
+      </div>
+    </div>
+    <div id="songCards" class="song-cards"></div>
+    <div class="sel-bottom">
+      <button id="btnImport" class="btn-ghost">导入我的音乐</button>
+      <input type="file" id="fileImport" accept="audio/*" hidden>
+      <div id="selHint" class="sel-hint">← → 切换 · 回车开跳</div>
+      <button id="btnBoard" class="btn-ghost">排行榜</button>
+    </div>
+  </div>
+
+  <!-- 摄像头准备 -->
+  <div id="calib" class="screen">
+    <div class="calib-card">
+      <div class="calib-title">摄像头准备</div>
+      <div class="calib-stage">
+        <video id="camVideo" playsinline muted></video>
+        <canvas id="camOverlay"></canvas>
+        <div id="calibGuide" class="calib-guide">请允许摄像头权限…</div>
+      </div>
+      <div class="calib-tips">
+        <span>💡 保持全身入镜</span><span>🔆 光线越亮识别越准</span><span id="tipDuo" style="display:none">👯 双人请左右站开</span>
+      </div>
+      <div class="calib-actions">
+        <button id="btnCalibBack" class="btn-ghost">返回</button>
+        <button id="btnDance" class="btn-primary" disabled>进入舞台</button>
+        <button id="btnNoCam" class="btn-ghost">无摄像头观演模式</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 游戏 HUD -->
+  <div id="game" class="screen">
+    <div class="hud-top">
+      <div class="hud-p1">
+        <div class="hud-name c1">P1</div>
+        <div id="score1" class="hud-score">0</div>
+        <div id="combo1" class="hud-combo"><b>0</b> COMBO</div>
+      </div>
+      <div class="hud-song">
+        <div id="hudSong" class="hud-song-name"></div>
+        <div class="hud-prog"><div id="hudProgFill"></div></div>
+      </div>
+      <div class="hud-p2" style="visibility:hidden">
+        <div class="hud-name c2">P2</div>
+        <div id="score2" class="hud-score">0</div>
+        <div id="combo2" class="hud-combo"><b>0</b> COMBO</div>
+      </div>
+    </div>
+    <div id="judge1" class="judge-pop"></div>
+    <div id="judge2" class="judge-pop p2"></div>
+    <div id="moveStrip" class="move-strip"></div>
+    <div class="pip"><video id="pipVideo" playsinline muted></video><canvas id="pipCanvas"></canvas></div>
+    <div id="gaugeWrap" class="gauge"><div id="gaugeFill"></div><div class="gauge-stars">★★★★★</div></div>
+    <div id="countdown" class="countdown"></div>
+    <button id="btnQuit" class="btn-quit">✕</button>
+    <div id="recDot" class="rec-dot" style="display:none">● REC</div>
+  </div>
+
+  <!-- 结算 -->
+  <div id="results" class="screen">
+    <div class="res-card">
+      <div id="resGrade" class="res-grade">S</div>
+      <div id="resTitle" class="res-title"></div>
+      <div id="resCols" class="res-cols"></div>
+      <div id="resBoard" class="res-board"></div>
+      <div class="res-actions">
+        <button id="btnPoster" class="btn-ghost">生成海报</button>
+        <button id="btnClip" class="btn-ghost" style="display:none">保存录像</button>
+        <button id="btnRetry" class="btn-ghost">再来一次</button>
+        <button id="btnBackSel" class="btn-primary">选曲</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 排行榜浮层 -->
+  <div id="board" class="overlay" style="display:none">
+    <div class="board-card">
+      <div class="board-title">排行榜 <span>LEADERBOARD</span></div>
+      <div id="boardList" class="board-list"></div>
+      <button id="btnBoardClose" class="btn-primary">关闭</button>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="toast"></div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
