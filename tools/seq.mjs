@@ -10,7 +10,7 @@ const page = await browser.newPage();
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 await page.goto('http://localhost:8991/?shot', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction('window.__ready === true', { timeout: 60000 });
-await page.evaluate('window.__startDemo(0, "solo")');
+await page.evaluate('window.__startDemo(2, "solo")');
 await new Promise((r) => setTimeout(r, 6000));
 for (let i = 0; i < 8; i++) {
   await page.screenshot({ path: `/tmp/dp_seq_${i}.png` });
