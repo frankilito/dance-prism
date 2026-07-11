@@ -31,6 +31,9 @@ export class Dancer {
     this.fromPose = getPose('idle');
     this.toPose = getPose('idle');
     this.moveT = 1;
+    this.transT = 1;            // 当前过渡进度(0..1,>=1 为保持段)
+    this.track = null;          // 流舞轨道(判定动作 + 过渡舞步)
+    this._d = Array.from({ length: 9 }, () => [0, 0, 0]); // 律动层复用向量
     this.rootYawTarget = 0;
     this.rootYaw = 0;
     this.jumpAnim = 0;
@@ -457,31 +460,47 @@ export class Dancer {
   // ---------- 谱面驱动 ----------
   setChart(chart) {
     this.chart = chart;
+    this.track = chart.flow || chart.moves; // 优先流舞轨道:每拍都有新舞步
     this.moveIdx = -1;
   }
 
-  // songBeat: 当前歌曲拍;提前 0.9 拍开始过渡,让动作正好踩在拍点上
+  // songBeat: 当前歌曲拍;按与上一步的间隔自适应提前量,动作正好踩在拍点上
   updateFromChart(songBeat) {
     if (!this.chart) return;
-    const moves = this.chart.moves;
+    const moves = this.track || this.chart.moves;
     let idx = this.moveIdx;
-    while (idx + 1 < moves.length && moves[idx + 1].beat - 0.9 <= songBeat) idx++;
+    while (idx + 1 < moves.length) {
+      const nx = moves[idx + 1];
+      const gap = idx >= 0 ? nx.beat - moves[idx].beat : 2;
+      const lead = Math.min(0.9, Math.max(0.35, gap * 0.62));
+      if (nx.beat - lead <= songBeat) idx++; else break;
+    }
     if (idx !== this.moveIdx && idx >= 0) {
       this.moveIdx = idx;
+      const mv = moves[idx];
       this.fromPose = { ...this.curPose };
-      this.toPose = getPose(moves[idx].pose);
-      this.moveStartBeat = Math.max(songBeat, moves[idx].beat - 0.9);
-      this.moveEndBeat = moves[idx].beat;
-      this.rootYawTarget = this.toPose.event === 'turn' ? (moves[idx].pose.endsWith('R') ? -1.15 : 1.15) : 0;
+      this.toPose = getPose(mv.pose);
+      const gap = idx > 0 ? mv.beat - moves[idx - 1].beat : 2;
+      const lead = Math.min(0.9, Math.max(0.35, gap * 0.62));
+      this.moveStartBeat = Math.max(songBeat, mv.beat - lead);
+      this.moveEndBeat = mv.beat;
+      // 过渡舞步不改变朝向(转身姿势多保持一拍)
+      if (!mv.fill) this.rootYawTarget = this.toPose.event === 'turn' ? (mv.pose.endsWith('R') ? -1.15 : 1.15) : 0;
       if (this.toPose.event === 'jump') this.jumpAnim = -1; // 待触发
     }
     if (this.moveIdx >= 0) {
       const span = Math.max(0.25, this.moveEndBeat - this.moveStartBeat);
-      let t = Math.min(1, (songBeat - this.moveStartBeat) / span);
+      const tRaw = Math.min(1, (songBeat - this.moveStartBeat) / span);
+      this.transT = tRaw;
       // easeOutBack:动作打到位有弹性
       const s = 1.35;
-      t = 1 + (s + 1) * Math.pow(t - 1, 3) + s * Math.pow(t - 1, 2);
+      const t = 1 + (s + 1) * Math.pow(tRaw - 1, 3) + s * Math.pow(tRaw - 1, 2);
       lerpPose(this.fromPose, this.toPose, Math.max(0, Math.min(1.08, t)), this.curPose);
+      // 弧线过渡:途中向"收势"弯一下,四肢轨迹变成弧线而非直线
+      if (tRaw < 0.995) {
+        if (!this._collect) this._collect = getPose('bounceLow');
+        lerpPose(this.curPose, this._collect, Math.sin(tRaw * Math.PI) * 0.26, this.curPose);
+      }
       // 跳跃抛物线
       if (this.toPose.event === 'jump') {
         const jt = (songBeat - (this.moveEndBeat - 0.5)) / 1;
@@ -497,23 +516,60 @@ export class Dancer {
     this.updateFromChart(songBeat);
     const p = this.curPose;
     const phase = songBeat % 1;
-    // 律动层:重拍下沉 + 摇摆
+    // 律动层:重拍下沉 + 摇摆 + 重心左右
     const bounce = -Math.abs(Math.sin(phase * Math.PI)) * 0.045 * (1 + level * 0.5);
     const sway = Math.sin(songBeat * Math.PI) * 0.05;
     this.hips.position.y = DIM.hipY + p.hipY * 0.9 + bounce + this.jumpAnim * 0.42;
+    this.hips.position.x = Math.sin(songBeat * Math.PI) * 0.05 * (1 + level * 0.4);
     this.hips.rotation.z = sway * 0.4;
     this.hips.rotation.y = THREE.MathUtils.lerp(this.hips.rotation.y, this.rootYawTarget, Math.min(1, dt * 9));
-    // 躯干
-    aim(this.spine, p.torso, UP);
+
+    // —— 持续律动:半拍处摆动最大、整拍处归零(保证判定拍点上姿势精确) ——
+    const g = Math.sin(phase * Math.PI) * (0.5 + level * 0.5) * (this.transT >= 0.995 ? 1 : 0.4);
+    const swing = Math.sin(songBeat * Math.PI);          // 2 拍一个前后摆循环(左右臂反相)
+    const swingLag = Math.sin((songBeat - 0.14) * Math.PI); // 前臂滞后,甩鞭感
+    const pump = Math.sin(songBeat * Math.PI * 2);       // 每拍一次的泵动
+    const pumpLag = Math.sin((songBeat - 0.1) * Math.PI * 2);
+    const D = this._d;
+    const armDir = (out, base, side, s, pp) => {
+      if (base[1] < -0.45) { // 垂臂:随步伐前后摆
+        out[0] = base[0]; out[1] = base[1]; out[2] = base[2] + s * 0.36 * g * side;
+      } else {               // 抬臂:节拍泵动
+        out[0] = base[0]; out[1] = base[1] + Math.abs(pp) * 0.1 * g; out[2] = base[2] + pp * 0.07 * g;
+      }
+      return out;
+    };
+
+    // 躯干(附加节拍脉冲)
+    D[8][0] = p.torso[0]; D[8][1] = p.torso[1]; D[8][2] = p.torso[2] + pump * 0.05 * g;
+    aim(this.spine, D[8], UP);
     this.spine.rotation.z += sway * 0.25;
     // 头:反向稳定 + 节拍点头
     this.head.rotation.x = Math.sin(songBeat * Math.PI * 2) * 0.07;
     this.head.rotation.z = -sway * 0.5;
-    // 四肢
-    aim(this.armL.upper, p.uaL); aim(this.armL.elbow.children[0], p.faL);
-    aim(this.armR.upper, p.uaR); aim(this.armR.elbow.children[0], p.faR);
-    aim(this.legL.thigh, p.thL); aim(this.legL.knee.children[0], p.shL);
-    aim(this.legR.thigh, p.thR); aim(this.legR.knee.children[0], p.shR);
+    // 手臂
+    aim(this.armL.upper, armDir(D[0], p.uaL, 1, swing, pump));
+    aim(this.armL.fore, armDir(D[1], p.faL, 1, swingLag, pumpLag));
+    aim(this.armR.upper, armDir(D[2], p.uaR, -1, swing, pump));
+    aim(this.armR.fore, armDir(D[3], p.faR, -1, swingLag, pumpLag));
+    // 腿:姿势里空闲(近直立)的腿随拍交替提膝踏步
+    const freeLeg = (th) => Math.abs(th[0]) < 0.45 && th[1] < -0.75 && Math.abs(th[2]) < 0.3;
+    const liftL = Math.max(0, Math.sin((songBeat % 2) * Math.PI)) * g;
+    const liftR = Math.max(0, Math.sin(((songBeat + 1) % 2) * Math.PI)) * g;
+    if (freeLeg(p.thL)) {
+      D[4][0] = p.thL[0]; D[4][1] = p.thL[1] + liftL * 0.22; D[4][2] = p.thL[2] + liftL * 0.5;
+      D[5][0] = p.shL[0]; D[5][1] = p.shL[1]; D[5][2] = p.shL[2] - liftL * 0.34;
+      aim(this.legL.thigh, D[4]); aim(this.legL.shin, D[5]);
+    } else {
+      aim(this.legL.thigh, p.thL); aim(this.legL.shin, p.shL);
+    }
+    if (freeLeg(p.thR)) {
+      D[6][0] = p.thR[0]; D[6][1] = p.thR[1] + liftR * 0.22; D[6][2] = p.thR[2] + liftR * 0.5;
+      D[7][0] = p.shR[0]; D[7][1] = p.shR[1]; D[7][2] = p.shR[2] - liftR * 0.34;
+      aim(this.legR.thigh, D[6]); aim(this.legR.shin, D[7]);
+    } else {
+      aim(this.legR.thigh, p.thR); aim(this.legR.shin, p.shR);
+    }
 
     // 表情
     this.faceTimer -= dt;

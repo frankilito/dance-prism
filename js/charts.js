@@ -88,7 +88,28 @@ const ROUTINES = {
   },
 };
 
-// 构建谱面:返回 { bpm, totalBeats, duration, moves, sections }
+// 流舞轨道:在相邻判定动作的中点自动插过渡舞步(只给舞者演,不进判定/预告/评分)。
+// 跳/蹲前插"蓄力",重复动作之间插"弹跳",其余左右律动交替 —— 让舞者每一拍都有新目标。
+function buildFlow(moves) {
+  const flow = [];
+  for (let i = 0; i < moves.length; i++) {
+    const mv = moves[i];
+    flow.push({ beat: mv.beat, pose: mv.pose, event: mv.event, sec: mv.sec });
+    const next = moves[i + 1];
+    if (!next) continue;
+    const gap = next.beat - mv.beat;
+    if (gap < 2) continue;
+    const midBeat = mv.beat + gap / 2;
+    let fillPose;
+    if (next.event === 'jump' || next.event === 'squat') fillPose = 'windup';
+    else if (next.pose === mv.pose) fillPose = 'bounceLow';
+    else fillPose = Math.floor(midBeat) % 4 < 2 ? 'grooveL' : 'grooveR';
+    flow.push({ beat: midBeat, pose: fillPose, fill: true, sec: mv.sec });
+  }
+  return flow;
+}
+
+// 构建谱面:返回 { bpm, totalBeats, duration, moves, flow, sections }
 export function buildChart(song, fast = false) {
   let arr = ARRANGEMENTS[song.id] || ARRANGEMENTS.neon;
   const routines = ROUTINES[song.id] || ROUTINES.neon;
@@ -110,7 +131,7 @@ export function buildChart(song, fast = false) {
   }
   const totalBeats = beat;
   const duration = (totalBeats * 60) / song.bpm;
-  return { songId: song.id, bpm: song.bpm, totalBeats, duration, moves, sections };
+  return { songId: song.id, bpm: song.bpm, totalBeats, duration, moves, flow: buildFlow(moves), sections };
 }
 
 // 导入音乐的自由谱面:按估算 BPM 循环编排
@@ -131,5 +152,5 @@ export function buildFreestyleChart(bpm, duration) {
     beat += 2;
     if (beat % 4 === 0) bar++;
   }
-  return { songId: 'custom', bpm, totalBeats: beats, duration, moves, sections };
+  return { songId: 'custom', bpm, totalBeats: beats, duration, moves, flow: buildFlow(moves), sections };
 }
